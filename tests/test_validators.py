@@ -1256,3 +1256,37 @@ def test_exceptions_in_field_validators_restore_original_field_value():
     with pytest.raises(RuntimeError, match='test error'):
         model.foo = 'raise_exception'
     assert model.foo == 'foo'
+
+
+
+def test_deep_model_assignment_starts_parent_root_validators():
+    class Child(BaseModel):
+        price: Optional[int]
+
+        class Config:
+            validate_assignment = True
+            allow_population_by_field_name = True
+        def __hash__(self):
+            import random
+            return random.randint(1, 100000)
+
+    class Parent(BaseModel):
+        child_obj: Child
+        type: str
+
+        @root_validator()
+        def validate_child_price_by_parent_type(cls, values):
+            print("qwrqrw")
+            if values["type"] == "priceless":
+                if values["child_obj"].price is not None:
+                    raise ValueError("Child shouldn't have price is Parent is priceless")
+            return values
+
+        class Config:
+            validate_assignment = True
+            allow_population_by_field_name = True
+
+    parent = Parent(type="priceless", child_obj=Child(price=None))
+
+    with pytest.raises(ValidationError):
+        parent.child_obj.price = 1000

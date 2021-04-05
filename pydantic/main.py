@@ -385,7 +385,7 @@ class BaseModel(Representation, metaclass=ModelMetaclass):
         __fields_set__: SetStr = set()
 
     Config = BaseConfig
-    __slots__ = ('__dict__', '__fields_set__')
+    __slots__ = ('__dict__', '__fields_set__', '__parent_instance__', '__parent_instance__name__')
     __doc__ = ''  # Null out the Representation docstring
 
     def __init__(__pydantic_self__, **data: Any) -> None:
@@ -395,7 +395,8 @@ class BaseModel(Representation, metaclass=ModelMetaclass):
         Raises ValidationError if the input data cannot be parsed to form a valid model.
         """
         # Uses something other than `self` the first arg to allow "self" as a settable attribute
-        values, fields_set, validation_error = validate_model(__pydantic_self__.__class__, data)
+        values, fields_set, validation_error = validate_model(__pydantic_self__.__class__, data,
+                                                              instance=__pydantic_self__)
         if validation_error:
             raise validation_error
         try:
@@ -454,6 +455,9 @@ class BaseModel(Representation, metaclass=ModelMetaclass):
             # update the whole __dict__ as other values than just `value`
             # may be changed (e.g. with `root_validator`)
             object_setattr(self, '__dict__', new_values)
+            parent = self.__getattribute__("__parent_instance__") # TODO: find way to get it
+            parent_field_name = self.__getattribute__("__parent_instance__name__")
+            object_setattr(parent, parent_field_name, self)
         else:
             self.__dict__[name] = value
 
@@ -478,6 +482,13 @@ class BaseModel(Representation, metaclass=ModelMetaclass):
             default = private_attr.get_default()
             if default is not Undefined:
                 object_setattr(self, name, default)
+
+    def _set_parent_instance(self, parent_instance, field_name=None) -> None:
+        """
+        Sets parent instance for invoking deep validation
+        """
+        object_setattr(self, '__parent_instance__', parent_instance)
+        object_setattr(self, '__parent_instance__name__', parent_instance)
 
     def dict(
         self,
@@ -988,7 +999,8 @@ _missing = object()
 
 
 def validate_model(  # noqa: C901 (ignore complexity)
-    model: Type[BaseModel], input_data: 'DictStrAny', cls: 'ModelOrDc' = None
+        model: Type[BaseModel], input_data: 'DictStrAny', cls: 'ModelOrDc' = None,
+        instance: Optional[Type[BaseModel]] = None
 ) -> Tuple['DictStrAny', 'SetStr', Optional[ValidationError]]:
     """
     validate data against a model.
@@ -1015,6 +1027,9 @@ def validate_model(  # noqa: C901 (ignore complexity)
         if value is _missing and config.allow_population_by_field_name and field.alt_alias:
             value = input_data.get(field.name, _missing)
             using_name = True
+
+        if instance and isinstance(value, BaseModel):
+            value._set_parent_instance(instance, field_name=name)
 
         if value is _missing:
             if field.required:
